@@ -1,0 +1,115 @@
+#!/bin/sh
+# mTLS Setup Wizard
+# Configure client certificates for calling Go server with mTLS
+
+echo "==============================================="
+echo " mTLS Client Certificate Setup"
+echo "==============================================="
+echo ""
+echo "This wizard will configure mTLS certificates so this OS"
+echo "can securely call your Go server."
+echo ""
+
+# Create SSL directory
+mkdir -p /etc/myos/ssl
+chmod 700 /etc/myos/ssl
+
+# Get CA Certificate
+echo "Paste CA Certificate (PEM format), then type EOF on an empty line:"
+echo ""
+
+CA_CERT=""
+while true; do
+    read LINE
+    [ "$LINE" = "EOF" ] && break
+    CA_CERT="$CA_CERT$LINE
+"
+done
+
+if [ -z "$CA_CERT" ]; then
+    echo "Error: CA certificate cannot be empty"
+    exit 1
+fi
+
+# Save CA cert
+printf "%s" "$CA_CERT" > /etc/myos/ssl/ca.pem
+chmod 600 /etc/myos/ssl/ca.pem
+echo "✓ CA certificate saved to /etc/myos/ssl/ca.pem"
+echo ""
+
+# Get Client Certificate
+echo "Paste Client Certificate (PEM format), then type EOF on an empty line:"
+echo ""
+
+CLIENT_CERT=""
+while true; do
+    read LINE
+    [ "$LINE" = "EOF" ] && break
+    CLIENT_CERT="$CLIENT_CERT$LINE
+"
+done
+
+if [ -z "$CLIENT_CERT" ]; then
+    echo "Error: Client certificate cannot be empty"
+    exit 1
+fi
+
+# Save client cert
+printf "%s" "$CLIENT_CERT" > /etc/myos/ssl/os-client.pem
+chmod 600 /etc/myos/ssl/os-client.pem
+echo "✓ Client certificate saved to /etc/myos/ssl/os-client.pem"
+echo ""
+
+# Get Client Private Key
+echo "Paste Client Private Key (PEM format), then type EOF on an empty line:"
+echo ""
+
+CLIENT_KEY=""
+while true; do
+    read LINE
+    [ "$LINE" = "EOF" ] && break
+    CLIENT_KEY="$CLIENT_KEY$LINE
+"
+done
+
+if [ -z "$CLIENT_KEY" ]; then
+    echo "Error: Client private key cannot be empty"
+    exit 1
+fi
+
+# Save client key
+printf "%s" "$CLIENT_KEY" > /etc/myos/ssl/os-client.key
+chmod 600 /etc/myos/ssl/os-client.key
+echo "✓ Client key saved to /etc/myos/ssl/os-client.key"
+echo ""
+
+# Get Server URL
+echo "Enter Go Server URL (e.g. https://server.example.com):"
+read SERVER_URL
+
+if [ -z "$SERVER_URL" ]; then
+    echo "Error: Server URL cannot be empty"
+    exit 1
+fi
+
+# Save server URL to config
+echo "$SERVER_URL" > /etc/myos/ssl/server_url.txt
+chmod 600 /etc/myos/ssl/server_url.txt
+
+echo ""
+echo "==============================================="
+echo " mTLS Configuration Complete!"
+echo "==============================================="
+echo ""
+echo "Certificates installed:"
+echo "  - CA: /etc/myos/ssl/ca.pem"
+echo "  - Client Cert: /etc/myos/ssl/os-client.pem"
+echo "  - Client Key: /etc/myos/ssl/os-client.key"
+echo "  - Server URL: $SERVER_URL"
+echo ""
+echo "You can now call your Go server using:"
+echo "  call_server [endpoint] [data]"
+echo ""
+echo "Example:"
+echo "  call_server /api/register '{\"os_id\": \"OS-123\"}'"
+echo ""

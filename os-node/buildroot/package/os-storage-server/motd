@@ -1,0 +1,24 @@
+
+============================================================
+   Welcome to StorageOS Node
+============================================================
+
+To connect this node to controller(s):
+
+  1. Get a 6-digit OTP from your admin dashboard
+  2. Run: os-storage-enroll
+  3. Enter the controller URL, node URL, and OTP
+  4. Wait for admin approval
+  5. Run: server-connect
+
+To enroll with additional controllers:
+  - Repeat steps 1-4 with os-storage-enroll
+
+Available Commands:
+  os-storage-enroll  - Enroll with a controller
+  server-connect     - Start storage server and connect
+  os-remove-node     - Remove enrollment from a controller
+
+Config file: /etc/os/controllers.json
+
+============================================================

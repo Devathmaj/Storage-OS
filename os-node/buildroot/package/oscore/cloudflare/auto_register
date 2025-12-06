@@ -1,0 +1,42 @@
+#!/bin/sh
+# Auto-registration script
+# Called on boot to register this OS instance with the Go server
+
+# Wait for network to be ready
+sleep 5
+
+# Check if mTLS is configured
+if [ ! -f /etc/myos/ssl/server_url.txt ]; then
+    echo "mTLS not configured, skipping registration"
+    exit 0
+fi
+
+# Get OS ID (from hostname or config)
+OS_ID=$(hostname)
+
+# Get Tunnel URL if configured
+if [ -f /etc/cloudflared/config.yml ]; then
+    TUNNEL_URL=$(grep "hostname:" /etc/cloudflared/config.yml | awk '{print "https://" $3}')
+else
+    TUNNEL_URL=""
+fi
+
+# Prepare registration data
+if [ -n "$TUNNEL_URL" ]; then
+    REG_DATA="{\"os_id\": \"$OS_ID\", \"tunnel_url\": \"$TUNNEL_URL\"}"
+else
+    REG_DATA="{\"os_id\": \"$OS_ID\"}"
+fi
+
+echo "Registering OS instance with server..."
+echo "OS ID: $OS_ID"
+echo "Tunnel URL: $TUNNEL_URL"
+
+# Call registration endpoint
+/usr/local/bin/call_server /api/os/register "$REG_DATA" POST
+
+if [ $? -eq 0 ]; then
+    echo "✓ Registration successful"
+else
+    echo "✗ Registration failed (will retry on next boot)"
+fi

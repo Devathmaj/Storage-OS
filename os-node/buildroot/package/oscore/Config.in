@@ -1,0 +1,16 @@
+config BR2_PACKAGE_OSCORE
+	bool "oscore - Optimized file storage system"
+	depends on BR2_PACKAGE_CLOUDFLARED
+	help
+	  High-performance file I/O library with optimizations:
+	  - Buffered I/O with 1MB buffers
+	  - Memory-mapped file operations
+	  - Zero-copy sendfile
+	  - Async I/O support
+	  - Huge page allocation
+	  - Built-in HTTP/TCP server for API communication
+	  - Cloudflare Tunnel support for secure remote access
+	  - mTLS client for secure server communication
+
+	  This package provides libfs.so, command-line tools,
+	  storageos-httpd server, and cloudflare tunnel setup.

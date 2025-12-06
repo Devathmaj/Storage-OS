@@ -11,12 +11,34 @@
 # OS Node build artifacts
 /os-node/buildroot/output
 /os-node/buildroot/dl
+/os-node/buildroot/.config
+/os-node/buildroot/.defconfig
+/os-node/buildroot/.config.old
+/os-node/buildroot/..config.tmp
+/os-node/buildroot/.git
+/os-node/buildroot/build.log
+/os-node/buildroot/rebuild.log
 *.img
 storage.img
 *.ext2
 *.ext4
 bzImage
 rootfs.ext2
+data-disk*.img
+data-disk*.qcow2
+
+# IMPORTANT: Keep custom buildroot packages (our source code)
+# These are maintained packages:
+# - oscore: Custom filesystem and storage core
+# - os-storage-server: Storage server with enrollment
+# - storagemgr: Storage management CLI tools
+# - storagequota: Quota management system
+!/os-node/buildroot/package/oscore/
+!/os-node/buildroot/package/os-storage-server/
+!/os-node/buildroot/package/storagemgr/
+!/os-node/buildroot/package/storagequota/
+!/os-node/buildroot/package/cloudflared/
+!/os-node/buildroot/configs/
 
 # Controller
 /controller/controller

@@ -1,0 +1,5 @@
+config BR2_PACKAGE_STORAGEQUOTA
+	bool "storagequota"
+	help
+	  Storage quota enforcement daemon for dynamic storage management.
+	  Monitors disk usage and enforces user-defined quota limits.

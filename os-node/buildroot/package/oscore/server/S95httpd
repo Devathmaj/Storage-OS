@@ -1,0 +1,73 @@
+#!/bin/sh
+#
+# Start StorageOS HTTP Server
+#
+
+DAEMON=/usr/sbin/storageos-httpd
+NAME=storageos-httpd
+PORT=8080
+PIDFILE=/var/run/$NAME.pid
+
+start() {
+    printf "Starting $NAME: "
+    start-stop-daemon -S -q -b -m -p $PIDFILE --exec $DAEMON -- $PORT
+    if [ $? -eq 0 ]; then
+        echo "OK"
+    else
+        echo "FAIL"
+    fi
+}
+
+stop() {
+    printf "Stopping $NAME: "
+    start-stop-daemon -K -q -p $PIDFILE
+    if [ $? -eq 0 ]; then
+        rm -f $PIDFILE
+        echo "OK"
+    else
+        echo "FAIL"
+    fi
+}
+
+restart() {
+    stop
+    sleep 1
+    start
+}
+
+status() {
+    if [ -f $PIDFILE ]; then
+        PID=$(cat $PIDFILE)
+        if [ -d /proc/$PID ]; then
+            echo "$NAME (pid $PID) is running..."
+            return 0
+        else
+            echo "$NAME is dead but pid file exists"
+            return 1
+        fi
+    else
+        echo "$NAME is not running"
+        return 3
+    fi
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart|reload)
+        restart
+        ;;
+    status)
+        status
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+
+exit $?

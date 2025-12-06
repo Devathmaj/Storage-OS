@@ -1,0 +1,113 @@
+#!/bin/sh
+#
+# Start OS Node Storage Server
+#
+
+DAEMON="/usr/bin/osnode"
+PIDFILE="/var/run/osnode.pid"
+LOG_FILE="/var/log/osnode.log"
+DATA_DIR="/data"
+DB_PATH="/data/metadata/osnode.db"
+SCHEMA_PATH="/etc/osnode/schema.sql"
+PORT="8082"
+NODE_ID="os-node-001"
+
+start() {
+    printf "Starting OS Node server: "
+    
+    # Wait for /data to be mounted (check mountpoint, not directory)
+    timeout=10
+    while ! mountpoint -q "$DATA_DIR" 2>/dev/null && [ $timeout -gt 0 ]; do
+        sleep 1
+        timeout=$((timeout - 1))
+    done
+    
+    # Check if mounted OR if files directory exists (for tmpfs or bind mounts)
+    if ! mountpoint -q "$DATA_DIR" 2>/dev/null && [ ! -d "$DATA_DIR" ]; then
+        echo "FAILED (storage not mounted)"
+        return 1
+    fi
+    
+    # Ensure files directory exists
+    mkdir -p "$DATA_DIR/files" 2>/dev/null || true
+    
+    # Ensure metadata directory exists
+    mkdir -p "$DATA_DIR/metadata"
+    
+    # Copy schema if database doesn't exist
+    if [ ! -f "$DB_PATH" ] && [ -f "$SCHEMA_PATH" ]; then
+        echo "Initializing database schema..."
+        cp "$SCHEMA_PATH" "$DATA_DIR/metadata/"
+    fi
+    
+    # Start server in background
+    start-stop-daemon -S -b -m -p "$PIDFILE" \
+        -x "$DAEMON" -- \
+        -port "$PORT" \
+        -db "$DB_PATH" \
+        -node-id "$NODE_ID" \
+        -data "$DATA_DIR" \
+        > "$LOG_FILE" 2>&1
+    
+    if [ $? -eq 0 ]; then
+        echo "OK"
+        echo "OS Node listening on port $PORT"
+        echo "Storage: $DATA_DIR/files"
+        echo "Database: $DB_PATH"
+    else
+        echo "FAILED"
+        return 1
+    fi
+}
+
+stop() {
+    printf "Stopping OS Node server: "
+    start-stop-daemon -K -p "$PIDFILE"
+    rm -f "$PIDFILE"
+    echo "OK"
+}
+
+restart() {
+    stop
+    sleep 1
+    start
+}
+
+status() {
+    if [ -f "$PIDFILE" ]; then
+        pid=$(cat "$PIDFILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "OS Node is running (PID $pid)"
+            echo "Listening on port $PORT"
+            echo "Storage: $DATA_DIR/files"
+            return 0
+        else
+            echo "PID file exists but process is dead"
+            return 1
+        fi
+    else
+        echo "OS Node is not running"
+        return 3
+    fi
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart)
+        restart
+        ;;
+    status)
+        status
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+
+exit $?

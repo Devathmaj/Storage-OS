@@ -1,0 +1,82 @@
+#!/bin/sh
+# Cloudflared Tunnel Init Script
+# Auto-start cloudflare tunnel if configured
+# Compatible with BusyBox init system
+
+[ -f /etc/cloudflared/config.yml ] || exit 0
+
+DAEMON="cloudflared"
+PIDFILE="/var/run/cloudflared.pid"
+
+start() {
+    printf "Starting $DAEMON: "
+    if [ -f "$PIDFILE" ]; then
+        PID=$(cat "$PIDFILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "already running (PID: $PID)"
+            return 0
+        fi
+    fi
+    
+    start-stop-daemon -S -b -m -p "$PIDFILE" -x /usr/bin/cloudflared -- tunnel run
+    [ $? = 0 ] && echo "OK" || echo "FAIL"
+}
+
+stop() {
+    printf "Stopping $DAEMON: "
+    if [ -f "$PIDFILE" ]; then
+        start-stop-daemon -K -p "$PIDFILE" -s TERM
+        rm -f "$PIDFILE"
+        echo "OK"
+    else
+        killall cloudflared 2>/dev/null
+        [ $? = 0 ] && echo "OK" || echo "FAIL"
+    fi
+}
+
+restart() {
+    stop
+    sleep 1
+    start
+}
+
+status() {
+    if [ -f "$PIDFILE" ]; then
+        PID=$(cat "$PIDFILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "$DAEMON is running (PID: $PID)"
+            return 0
+        else
+            echo "$DAEMON is not running (stale PID file)"
+            return 1
+        fi
+    else
+        if pgrep -x cloudflared >/dev/null; then
+            echo "$DAEMON is running (no PID file)"
+            return 0
+        else
+            echo "$DAEMON is not running"
+            return 1
+        fi
+    fi
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart|reload)
+        restart
+        ;;
+    status)
+        status
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+esac
+
+exit $?

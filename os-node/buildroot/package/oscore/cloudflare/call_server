@@ -1,0 +1,65 @@
+#!/bin/sh
+# Helper script to call Go server with mTLS authentication
+# Usage: call_server [endpoint] [json_data] [method]
+
+# Load configuration
+if [ ! -f /etc/myos/ssl/server_url.txt ]; then
+    echo "Error: mTLS not configured. Run 'setup_mtls' first."
+    exit 1
+fi
+
+SERVER_URL=$(cat /etc/myos/ssl/server_url.txt)
+CERT="/etc/myos/ssl/os-client.pem"
+KEY="/etc/myos/ssl/os-client.key"
+CA="/etc/myos/ssl/ca.pem"
+
+# Check if certificates exist
+if [ ! -f "$CERT" ] || [ ! -f "$KEY" ] || [ ! -f "$CA" ]; then
+    echo "Error: Certificate files not found. Run 'setup_mtls' first."
+    exit 1
+fi
+
+# Parse arguments
+ENDPOINT="${1:-/api/health}"
+DATA="${2}"
+METHOD="${3:-GET}"
+
+# If data is provided, use POST method by default
+if [ -n "$DATA" ] && [ "$METHOD" = "GET" ]; then
+    METHOD="POST"
+fi
+
+# Construct full URL
+FULL_URL="$SERVER_URL$ENDPOINT"
+
+echo "Calling: $FULL_URL"
+echo "Method: $METHOD"
+
+# Make request
+if [ -n "$DATA" ]; then
+    curl --fail -s \
+      --cert "$CERT" \
+      --key "$KEY" \
+      --cacert "$CA" \
+      -X "$METHOD" "$FULL_URL" \
+      -H "Content-Type: application/json" \
+      -d "$DATA"
+else
+    curl --fail -s \
+      --cert "$CERT" \
+      --key "$KEY" \
+      --cacert "$CA" \
+      -X "$METHOD" "$FULL_URL"
+fi
+
+RESULT=$?
+
+if [ $RESULT -eq 0 ]; then
+    echo ""
+    echo "✓ Request successful"
+else
+    echo ""
+    echo "✗ Request failed (exit code: $RESULT)"
+fi
+
+exit $RESULT

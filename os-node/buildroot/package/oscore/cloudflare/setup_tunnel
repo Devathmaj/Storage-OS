@@ -1,0 +1,110 @@
+#!/bin/sh
+# Cloudflare Tunnel Setup Wizard
+# Interactive setup for configuring cloudflared tunnel on this OS instance
+
+echo "==============================================="
+echo " Cloudflare Tunnel Setup Wizard"
+echo "==============================================="
+echo ""
+echo "This wizard will configure this OS instance to expose"
+echo "itself via Cloudflare Tunnel."
+echo ""
+
+# Get Tunnel ID
+echo "Enter Tunnel ID (from Cloudflare Dashboard):"
+read TID
+
+if [ -z "$TID" ]; then
+    echo "Error: Tunnel ID cannot be empty"
+    exit 1
+fi
+
+# Get Hostname
+echo ""
+echo "Enter Hostname (e.g. os-001.example.com):"
+read HNAME
+
+if [ -z "$HNAME" ]; then
+    echo "Error: Hostname cannot be empty"
+    exit 1
+fi
+
+# Get Credentials Filename
+echo ""
+echo "Enter Credentials JSON filename (e.g. $TID.json):"
+read CFILE
+
+if [ -z "$CFILE" ]; then
+    # Default to tunnel ID if not specified
+    CFILE="$TID.json"
+fi
+
+# Get Credentials JSON
+echo ""
+echo "Paste Credentials JSON below, then type EOF on an empty line:"
+echo ""
+
+CRED=""
+while true; do
+    read LINE
+    [ "$LINE" = "EOF" ] && break
+    CRED="$CRED$LINE
+"
+done
+
+if [ -z "$CRED" ]; then
+    echo "Error: Credentials JSON cannot be empty"
+    exit 1
+fi
+
+# Create directories
+mkdir -p /etc/cloudflared
+chmod 700 /etc/cloudflared
+
+# Save credentials JSON
+printf "%s" "$CRED" > /etc/cloudflared/$CFILE
+chmod 600 /etc/cloudflared/$CFILE
+
+# Generate config.yml from template
+if [ ! -f /etc/cloudflared/config.yml.template ]; then
+    echo "Error: Template file /etc/cloudflared/config.yml.template not found"
+    exit 1
+fi
+
+sed \
+  -e "s/{{TUNNEL_ID}}/$TID/" \
+  -e "s/{{HOSTNAME}}/$HNAME/" \
+  -e "s/{{CREDENTIAL_FILE}}/$CFILE/" \
+  /etc/cloudflared/config.yml.template > /etc/cloudflared/config.yml
+
+chmod 600 /etc/cloudflared/config.yml
+
+echo ""
+echo "==============================================="
+echo " Configuration Complete!"
+echo "==============================================="
+echo ""
+echo "Tunnel ID: $TID"
+echo "Hostname: $HNAME"
+echo "Credentials: /etc/cloudflared/$CFILE"
+echo "Config: /etc/cloudflared/config.yml"
+echo ""
+echo "Starting cloudflared tunnel..."
+
+# Check if cloudflared exists
+if ! command -v cloudflared >/dev/null 2>&1; then
+    echo "Warning: cloudflared binary not found in PATH"
+    echo "Please ensure cloudflared is installed"
+    exit 1
+fi
+
+# Start tunnel in background
+cloudflared tunnel run &
+TUNNEL_PID=$!
+
+echo ""
+echo "Cloudflare tunnel started (PID: $TUNNEL_PID)"
+echo "Your OS is now accessible at: https://$HNAME"
+echo ""
+echo "The tunnel will auto-start on next boot via /etc/init.d/S98cloudflared"
+echo ""

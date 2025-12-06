@@ -1,0 +1,155 @@
+#!/bin/sh
+#
+# Auto-initialize persistent storage on /dev/vdb
+# NO PARTITIONING - Uses disk directly with quota-based limits
+#
+
+DEVICE=/dev/vdb
+MOUNT_POINT=/data
+FLAG_FILE=/data/.storage_initialized
+QUOTA_FILE=/etc/storage-quota.conf
+
+start() {
+    printf "Initializing storage: "
+    
+    # Wait for device to be available
+    RETRIES=10
+    while [ $RETRIES -gt 0 ]; do
+        if [ -b "$DEVICE" ]; then
+            break
+        fi
+        sleep 1
+        RETRIES=$((RETRIES - 1))
+    done
+    
+    if [ ! -b "$DEVICE" ]; then
+        echo "FAIL: Device $DEVICE not found"
+        echo "Available block devices:"
+        ls -l /dev/vd* 2>/dev/null || echo "No virtio block devices found"
+        return 1
+    fi
+    
+    # Get disk size in MB for information
+    DISK_SIZE_BYTES=$(blockdev --getsize64 "$DEVICE" 2>/dev/null)
+    DISK_SIZE_MB=$((DISK_SIZE_BYTES / 1024 / 1024))
+    echo "detected ${DISK_SIZE_MB} MB disk"
+    
+    # Check if disk already has a filesystem (don't format if it does)
+    FS_TYPE=$(blkid -o value -s TYPE "$DEVICE" 2>/dev/null)
+    
+    if [ -z "$FS_TYPE" ]; then
+        echo "Creating ext4 filesystem on $DEVICE (no partitioning)..."
+        # Format the raw disk directly - NO PARTITIONS
+        if ! mkfs.ext4 -F -L "STORAGEOS" "$DEVICE" 2>&1; then
+            echo "FAIL: Could not create filesystem on $DEVICE"
+            echo "Device info:"
+            ls -l "$DEVICE" 2>&1
+            return 1
+        fi
+        echo "Filesystem created successfully"
+    else
+        echo "using existing $FS_TYPE filesystem"
+    fi
+    
+    # Create mount point and mount the raw disk (not a partition)
+    mkdir -p "$MOUNT_POINT"
+    if ! mountpoint -q "$MOUNT_POINT"; then
+        mount "$DEVICE" "$MOUNT_POINT"
+        if [ $? -ne 0 ]; then
+            echo "FAIL: Could not mount filesystem"
+            return 1
+        fi
+    fi
+    
+    # Check if already initialized (flag file exists on mounted filesystem)
+    if [ -f "$FLAG_FILE" ]; then
+        echo "already configured (remounted)"
+        return 0
+    fi
+    
+    echo "first boot - configuring..."
+    
+    # Create directory structure
+    mkdir -p "$MOUNT_POINT/files"
+    mkdir -p "$MOUNT_POINT/chunks"
+    mkdir -p "$MOUNT_POINT/metadata"
+    mkdir -p "$MOUNT_POINT/temp"
+    
+    # Set permissions
+    chmod 755 "$MOUNT_POINT"
+    chmod 755 "$MOUNT_POINT/files"
+    chmod 755 "$MOUNT_POINT/chunks"
+    chmod 755 "$MOUNT_POINT/metadata"
+    chmod 777 "$MOUNT_POINT/temp"
+    
+    # Run initial storage configuration (quota setup)
+    if [ -x /usr/bin/setup-storage ]; then
+        /usr/bin/setup-storage
+    fi
+    
+    # Create flag file to indicate initialization is complete
+    touch "$FLAG_FILE"
+    
+    echo "OK - Storage initialized at $MOUNT_POINT"
+    echo "Available space: $(df -h $MOUNT_POINT | tail -1 | awk '{print $4}')"
+    return 0
+}
+
+stop() {
+    printf "Unmounting storage: "
+    if mountpoint -q "$MOUNT_POINT"; then
+        sync
+        umount "$MOUNT_POINT"
+        if [ $? -eq 0 ]; then
+            echo "OK"
+        else
+            echo "FAIL"
+            return 1
+        fi
+    else
+        echo "not mounted"
+    fi
+    return 0
+}
+
+status() {
+    if [ -f "$FLAG_FILE" ]; then
+        echo "Storage initialized: YES"
+    else
+        echo "Storage initialized: NO"
+    fi
+    
+    if mountpoint -q "$MOUNT_POINT"; then
+        echo "Storage mounted: YES at $MOUNT_POINT"
+        echo "Filesystem info:"
+        df -h "$MOUNT_POINT"
+        echo ""
+        echo "Directory structure:"
+        ls -la "$MOUNT_POINT" 2>/dev/null
+    else
+        echo "Storage mounted: NO"
+    fi
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart)
+        stop
+        sleep 1
+        start
+        ;;
+    status)
+        status
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+
+exit $?

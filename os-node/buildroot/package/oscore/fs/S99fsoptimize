@@ -1,0 +1,40 @@
+#!/bin/sh
+#
+# Start FS optimization layer via LD_PRELOAD
+#
+
+case "$1" in
+  start)
+    echo "Enabling optimized file system layer..."
+    
+    # Add to /etc/ld.so.preload for system-wide preloading
+    if [ ! -f /etc/ld.so.preload ]; then
+        echo "/usr/lib/libfs_preload.so" > /etc/ld.so.preload
+    elif ! grep -q "libfs_preload.so" /etc/ld.so.preload; then
+        echo "/usr/lib/libfs_preload.so" >> /etc/ld.so.preload
+    fi
+    
+    # Also set in environment for current shell and children
+    export LD_PRELOAD="/usr/lib/libfs_preload.so:$LD_PRELOAD"
+    
+    echo "OK"
+    ;;
+  stop)
+    echo "Disabling optimized file system layer..."
+    
+    if [ -f /etc/ld.so.preload ]; then
+        sed -i '/libfs_preload.so/d' /etc/ld.so.preload
+    fi
+    
+    echo "OK"
+    ;;
+  restart|reload)
+    "$0" stop
+    "$0" start
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+esac
+
+exit $?

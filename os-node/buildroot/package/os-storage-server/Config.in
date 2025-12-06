@@ -1,0 +1,12 @@
+config BR2_PACKAGE_OS_STORAGE_SERVER
+	bool "os-storage-server"
+	depends on BR2_PACKAGE_HOST_GO_TARGET_ARCH_SUPPORTS
+	depends on BR2_PACKAGE_HOST_GO_TARGET_CGO_LINKING_SUPPORTS
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	select BR2_PACKAGE_DQLITE
+	help
+	  OS Storage Server - Handles file storage and dqlite metadata
+	  operations for the distributed storage system. Starts after
+	  storage initialization and provides HTTP API for file operations.
+
+	  This server is the core storage backend for StorageOS nodes.

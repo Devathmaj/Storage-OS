@@ -1,0 +1,224 @@
+#!/bin/sh
+################################################################################
+# server-connect - Connect OS Node to Controller(s)
+# This script handles enrollment and starting the storage server.
+# Supports multiple controller connections.
+################################################################################
+
+CONTROLLERS_CONFIG="/etc/os/controllers.json"
+ENROLL_TOOL="/usr/bin/os-storage-enroll"
+DAEMON="/usr/bin/os-storage-server"
+REVOCATION_CHECK_INTERVAL=60  # Check revocation every 60 seconds
+
+echo ""
+echo "============================================================"
+echo "   OS Storage Server Connection"
+echo "============================================================"
+echo ""
+
+# Function to check if enrolled with any controller
+check_enrollment() {
+    if [ -f "$CONTROLLERS_CONFIG" ]; then
+        CONTROLLER_COUNT=$(cat "$CONTROLLERS_CONFIG" 2>/dev/null | grep -c '"status": "active"' || echo "0")
+        if [ "$CONTROLLER_COUNT" -gt 0 ]; then
+            return 0
+        fi
+    fi
+    
+    # Fallback to legacy check
+    if [ -f "/etc/os/os.crt" ] && [ -f "/etc/os/os.key" ]; then
+        return 0
+    fi
+    
+    return 1
+}
+
+# Function to list enrolled controllers
+list_controllers() {
+    if [ -f "$CONTROLLERS_CONFIG" ]; then
+        echo "Enrolled Controllers:"
+        echo "---------------------"
+        # Parse JSON with simple shell tools (jq might not be available)
+        awk -F'"' '
+            /"controller_url"/ { url=$4 }
+            /"id"/ { id=$4 }
+            /"status"/ { 
+                status=$4
+                if (status == "active") {
+                    printf "  - %s (Node ID: %s)\n", url, id
+                }
+            }
+        ' "$CONTROLLERS_CONFIG"
+        echo ""
+    else
+        echo "Legacy enrollment detected."
+        if [ -f "/etc/os/controller_url" ]; then
+            echo "  Controller: $(cat /etc/os/controller_url)"
+        fi
+        if [ -f "/etc/os/node_id" ]; then
+            echo "  Node ID: $(cat /etc/os/node_id)"
+        fi
+        echo ""
+    fi
+}
+
+# Function to register with a single controller
+register_with_controller() {
+    local controller_url="$1"
+    local node_id="$2"
+    local node_url="$3"
+    
+    echo "Registering with $controller_url..."
+    REGISTER_DATA="{\"node_id\":\"$node_id\",\"url\":\"$node_url\"}"
+    wget -q -O - --post-data="$REGISTER_DATA" \
+         --header="Content-Type: application/json" \
+         "$controller_url/v1/provisioning/register-node" >/dev/null 2>&1 \
+         && echo "✓ Registered with $controller_url" || echo "⚠️ Registration with $controller_url failed (may already be registered)"
+}
+
+# Function to check revocation status with controller
+check_revocation_status() {
+    local controller_url="$1"
+    local node_id="$2"
+    
+    # Try to check status with controller
+    RESPONSE=$(wget -q -O - "$controller_url/v1/provisioning/node-status/$node_id" 2>/dev/null)
+    if [ -n "$RESPONSE" ]; then
+        STATUS=$(echo "$RESPONSE" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
+        if [ "$STATUS" = "revoked" ]; then
+            return 1  # Node is revoked
+        fi
+    fi
+    return 0  # Node is active or status unknown
+}
+
+# Function to handle revoked controller
+handle_revocation() {
+    local controller_url="$1"
+    local node_id="$2"
+    
+    echo "⚠️ Node $node_id has been revoked by $controller_url"
+    echo "   Cleaning up local enrollment..."
+    
+    # Update status in controllers.json
+    if [ -f "$CONTROLLERS_CONFIG" ]; then
+        # Mark as revoked in config (using sed for simple JSON editing)
+        TMP_FILE=$(mktemp)
+        awk -v url="$controller_url" '
+            BEGIN { in_entry=0 }
+            /"controller_url".*:.*"/ {
+                if (index($0, url) > 0) {
+                    in_entry=1
+                }
+            }
+            in_entry && /"status"/ {
+                sub(/"status".*:.*"active"/, "\"status\": \"revoked\"")
+                in_entry=0
+            }
+            { print }
+        ' "$CONTROLLERS_CONFIG" > "$TMP_FILE" && mv "$TMP_FILE" "$CONTROLLERS_CONFIG"
+    fi
+    
+    echo "   Status updated to 'revoked'"
+}
+
+# Function to run revocation check loop in background
+start_revocation_monitor() {
+    echo "Starting revocation monitor (check interval: ${REVOCATION_CHECK_INTERVAL}s)..."
+    
+    while true; do
+        sleep "$REVOCATION_CHECK_INTERVAL"
+        
+        if [ -f "$CONTROLLERS_CONFIG" ]; then
+            # Check each active controller
+            awk -F'"' '
+                /"controller_url"/ { url=$4 }
+                /"id"/ { id=$4 }
+                /"status"/ { 
+                    status=$4
+                    if (status == "active" && url != "" && id != "") {
+                        print url " " id
+                    }
+                }
+            ' "$CONTROLLERS_CONFIG" | while read CTRL_URL CTRL_ID; do
+                if [ -n "$CTRL_URL" ] && [ -n "$CTRL_ID" ]; then
+                    if ! check_revocation_status "$CTRL_URL" "$CTRL_ID"; then
+                        handle_revocation "$CTRL_URL" "$CTRL_ID"
+                    fi
+                fi
+            done
+        fi
+    done &
+    
+    echo "Revocation monitor started (PID: $!)"
+}
+
+# Main logic
+if check_enrollment; then
+    echo "✅ Node is enrolled"
+    list_controllers
+    
+    echo "Starting storage server in background..."
+    echo ""
+    
+    # Start the server in background
+    nohup "$DAEMON" > /var/log/os-storage-server.log 2>&1 &
+    echo $! > /var/run/osstorage.pid
+    echo "✓ Storage server started (PID: $(cat /var/run/osstorage.pid))"
+    echo "   Logs: /var/log/os-storage-server.log"
+    echo ""
+    
+    # Wait a moment for server to start
+    sleep 2
+    
+    # Register with all active controllers
+    echo "Registering with controllers..."
+    if [ -f "$CONTROLLERS_CONFIG" ]; then
+        # Parse JSON and register with each active controller
+        awk -F'"' '
+            /"controller_url"/ { url=$4 }
+            /"id"/ { id=$4 }
+            /"node_url"/ { node_url=$4 }
+            /"status"/ { 
+                status=$4
+                if (status == "active" && url != "" && id != "" && node_url != "") {
+                    print url " " id " " node_url
+                }
+            }
+        ' "$CONTROLLERS_CONFIG" | while read CTRL_URL CTRL_ID CTRL_NODE_URL; do
+            if [ -n "$CTRL_URL" ] && [ -n "$CTRL_ID" ] && [ -n "$CTRL_NODE_URL" ]; then
+                register_with_controller "$CTRL_URL" "$CTRL_ID" "$CTRL_NODE_URL"
+            fi
+        done
+    else
+        # Legacy mode - single controller
+        CONTROLLER_URL=$(cat /etc/os/controller_url 2>/dev/null)
+        NODE_ID=$(cat /etc/os/node_id 2>/dev/null)
+        NODE_URL=$(cat /etc/os/node_url 2>/dev/null)
+        if [ -n "$NODE_ID" ] && [ -n "$NODE_URL" ] && [ -n "$CONTROLLER_URL" ]; then
+            register_with_controller "$CONTROLLER_URL" "$NODE_ID" "$NODE_URL"
+        fi
+    fi
+    echo ""
+    
+    # Start revocation monitor
+    start_revocation_monitor
+    
+    echo "============================================================"
+    echo "   Server is running and connected to controllers"
+    echo "============================================================"
+else
+    echo "⚠️  Node is not enrolled yet"
+    echo ""
+    echo "Enrollment is required before starting the server."
+    echo "Please run the enrollment process from the controller dashboard."
+    echo ""
+    echo "Steps:"
+    echo "  1. Generate OTP in dashboard (Settings → OS Node Provisioning)"
+    echo "  2. Run: os-storage-enroll"
+    echo "  3. Enter the OTP when prompted"
+    echo "  4. Approve in dashboard"
+    echo ""
+    echo "To connect to multiple controllers, run 'os-storage-enroll' multiple times."
+    echo ""
+fi

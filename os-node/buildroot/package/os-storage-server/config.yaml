@@ -1,0 +1,5 @@
+listen_addr: 0.0.0.0:10082
+data_dir: /data/storage
+db_path: /data/storage/osnode.db
+node_id: os-node-1
+node_url: http://localhost:10082

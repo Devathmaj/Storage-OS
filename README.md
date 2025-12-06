@@ -77,10 +77,43 @@ StorageOS is a comprehensive cloud storage solution that includes:
 
 3. **OS Storage Nodes** - Dedicated storage OS
    - Custom Buildroot Linux (minimal footprint)
-   - Optimized storage server
+   - Optimized storage server with custom code
    - Auto-enrollment with OTP
    - mTLS client authentication
    - Runs in QEMU (portable across platforms)
+
+### Custom Buildroot Packages
+
+The OS storage node includes **4 custom-developed Buildroot packages** (source code in `/os-node/buildroot/package/`):
+
+1. **`oscore`** - Custom filesystem and storage core
+   - Optimized file query engine with B-tree indexing
+   - ZSTD/LZ4 compression algorithms
+   - AES-256-GCM encryption layer
+   - Metadata caching system
+   - Custom filesystem implementation for high-speed operations
+
+2. **`os-storage-server`** - Storage server daemon
+   - Go-based HTTP server for file storage
+   - OTP-based enrollment system (`os-storage-enroll`)
+   - mTLS certificate management
+   - Integration with controller API
+   - Server connectivity tools (`server-connect`)
+
+3. **`storagemgr`** - Storage management CLI
+   - Storage statistics (`storagemgr stats`)
+   - Health monitoring (`storagemgr health`)
+   - File listing and verification tools
+   - Disk usage tracking
+   - System diagnostics
+
+4. **`storagequota`** - Quota management system
+   - Per-user storage quota enforcement
+   - Quota daemon (`quotad`)
+   - Quota control CLI (`quotactl`)
+   - Real-time usage tracking
+
+These packages contain the **core custom code** that differentiates this storage OS from standard Linux distributions. They are maintained in this repository and built into the OS image during compilation.
 
 ## ✨ Key Features
 
@@ -196,6 +229,49 @@ The OS node will now start automatically with Windows!
 4. **Start Uploading**: Drag and drop files in the web interface
 
 ## 📖 Installation Guide
+
+### Building from Source
+
+#### OS Storage Node - Custom Build
+
+To build the OS storage node from source (includes custom packages):
+
+```bash
+# Use the Ubuntu quick setup script
+sudo ./ubuntu-quick-setup.sh
+```
+
+This automated script will:
+1. Install Buildroot dependencies
+2. Build the custom OS (includes oscore, os-storage-server, storagemgr, storagequota packages)
+3. Package the distribution
+4. Install systemd service
+5. Start the node
+
+**Build time**: 30-60 minutes (depending on CPU)
+
+**Custom packages location**: `/os-node/buildroot/package/`
+- `oscore/` - Filesystem core
+- `os-storage-server/` - Storage server daemon
+- `storagemgr/` - Management CLI
+- `storagequota/` - Quota system
+
+**Manual build**:
+```bash
+cd os-node/buildroot
+
+# Install dependencies
+sudo apt-get install build-essential gcc make binutils \
+  libncurses5-dev libssl-dev python3 qemu-system-x86
+
+# Configure (if not already configured)
+make storage_os_defconfig
+
+# Build (use all CPU cores)
+make -j$(nproc)
+
+# Output: output/images/bzImage and output/images/rootfs.ext2
+```
 
 ### 1. Controller Setup
 

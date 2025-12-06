@@ -1,0 +1,23 @@
+#!/bin/sh
+################################################################################
+# S85quotad - Init script for quota daemon
+################################################################################
+
+case "$1" in
+    start)
+        /usr/sbin/quotad start
+        ;;
+    stop)
+        /usr/sbin/quotad stop
+        ;;
+    restart|reload)
+        /usr/sbin/quotad stop
+        sleep 1
+        /usr/sbin/quotad start
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+esac
+
+exit 0

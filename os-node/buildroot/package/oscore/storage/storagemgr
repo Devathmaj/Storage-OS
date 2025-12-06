@@ -1,0 +1,318 @@
+#!/bin/sh
+#
+# StorageOS - Storage Manager CLI
+# Manages storage quotas and reports usage
+# Quota-based system - storage grows as files are added, rejects when quota reached
+#
+
+MOUNT_POINT=/data
+QUOTA_FILE=/etc/storage-quota.conf
+DEVICE=/dev/vdb
+DEFAULT_QUOTA_MB=1000
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+print_header() {
+    echo "════════════════════════════════════════════════════════════════"
+    echo "           $1"
+    echo "════════════════════════════════════════════════════════════════"
+    echo ""
+}
+
+# Get total disk capacity in MB
+get_disk_capacity_mb() {
+    if [ -b "$DEVICE" ]; then
+        BYTES=$(blockdev --getsize64 "$DEVICE" 2>/dev/null)
+        echo $((BYTES / 1024 / 1024))
+    elif mountpoint -q "$MOUNT_POINT" 2>/dev/null; then
+        df -m "$MOUNT_POINT" | tail -1 | awk '{print $2}'
+    else
+        echo "0"
+    fi
+}
+
+# Get current disk usage in MB (actual space used on filesystem)
+get_disk_used_mb() {
+    if mountpoint -q "$MOUNT_POINT" 2>/dev/null; then
+        df -m "$MOUNT_POINT" | tail -1 | awk '{print $3}'
+    else
+        echo "0"
+    fi
+}
+
+# Get available disk space in MB (physical free space)
+get_disk_available_mb() {
+    if mountpoint -q "$MOUNT_POINT" 2>/dev/null; then
+        df -m "$MOUNT_POINT" | tail -1 | awk '{print $4}'
+    else
+        echo "0"
+    fi
+}
+
+# Get configured quota from config file
+get_quota_limit() {
+    if [ -f "$QUOTA_FILE" ]; then
+        grep "^QUOTA_LIMIT_MB=" "$QUOTA_FILE" | cut -d= -f2
+    else
+        echo "$DEFAULT_QUOTA_MB"
+    fi
+}
+
+# Get the maximum disk size from config
+get_disk_size_from_config() {
+    if [ -f "$QUOTA_FILE" ]; then
+        grep "^DISK_SIZE_MB=" "$QUOTA_FILE" | cut -d= -f2
+    else
+        get_disk_capacity_mb
+    fi
+}
+
+# Set quota limit
+set_quota() {
+    QUOTA_MB=$1
+    DISK_CAPACITY=$(get_disk_capacity_mb)
+    CURRENT_USAGE=$(get_disk_used_mb)
+    
+    if [ "$QUOTA_MB" -gt "$DISK_CAPACITY" ]; then
+        echo "${RED}✗ Error: Quota ($QUOTA_MB MB) exceeds disk capacity ($DISK_CAPACITY MB)${NC}"
+        return 1
+    fi
+    
+    if [ "$QUOTA_MB" -lt "$CURRENT_USAGE" ]; then
+        echo "${RED}✗ Error: Quota ($QUOTA_MB MB) is less than current usage ($CURRENT_USAGE MB)${NC}"
+        echo "  Free up some space first or choose a higher quota."
+        return 1
+    fi
+    
+    if [ "$QUOTA_MB" -lt 1 ]; then
+        echo "${RED}✗ Error: Minimum quota is 1 MB${NC}"
+        return 1
+    fi
+    
+    # Update or create quota file
+    if [ -f "$QUOTA_FILE" ]; then
+        # Update existing quota
+        sed -i "s/^QUOTA_LIMIT_MB=.*/QUOTA_LIMIT_MB=$QUOTA_MB/" "$QUOTA_FILE"
+    else
+        # Create new quota file
+        cat > "$QUOTA_FILE" <<EOF
+# Storage Quota Configuration
+QUOTA_LIMIT_MB=$QUOTA_MB
+DISK_SIZE_MB=$DISK_CAPACITY
+CURRENT_USAGE_MB=$CURRENT_USAGE
+SETUP_COMPLETED=yes
+EOF
+    fi
+    
+    if [ $? -eq 0 ]; then
+        echo "${GREEN}✓ Quota set to $QUOTA_MB MB${NC}"
+        return 0
+    else
+        echo "${RED}✗ Failed to set quota${NC}"
+        return 1
+    fi
+}
+
+# Check if there's space to store a file of given size
+# Returns 0 if OK, 1 if quota exceeded, 2 if disk full
+can_store_file() {
+    FILE_SIZE_MB=$1
+    QUOTA=$(get_quota_limit)
+    CURRENT_USAGE=$(get_disk_used_mb)
+    DISK_AVAILABLE=$(get_disk_available_mb)
+    
+    # Check quota first
+    NEW_USAGE=$((CURRENT_USAGE + FILE_SIZE_MB))
+    if [ "$NEW_USAGE" -gt "$QUOTA" ]; then
+        echo "QUOTA_EXCEEDED"
+        return 1
+    fi
+    
+    # Check physical disk space
+    if [ "$FILE_SIZE_MB" -gt "$DISK_AVAILABLE" ]; then
+        echo "DISK_FULL"
+        return 2
+    fi
+    
+    echo "OK"
+    return 0
+}
+
+show_status() {
+    print_header "StorageOS - Storage Status"
+    
+    DISK_CAPACITY=$(get_disk_capacity_mb)
+    DISK_USED=$(get_disk_used_mb)
+    DISK_AVAIL=$(get_disk_available_mb)
+    QUOTA=$(get_quota_limit)
+    
+    echo "📊 Physical Disk Information:"
+    echo "─────────────────────────────────────────────────────────────────"
+    printf "  Device:           %s\n" "$DEVICE"
+    printf "  Total Capacity:   %s MB\n" "$DISK_CAPACITY"
+    printf "  Used:             %s MB\n" "$DISK_USED"
+    printf "  Free (physical):  %s MB\n" "$DISK_AVAIL"
+    echo "─────────────────────────────────────────────────────────────────"
+    echo ""
+    
+    echo "📋 Quota Configuration:"
+    echo "─────────────────────────────────────────────────────────────────"
+    printf "  Quota Limit:      %s MB\n" "$QUOTA"
+    
+    if [ "$QUOTA" -gt 0 ]; then
+        QUOTA_USED_PERCENT=$((DISK_USED * 100 / QUOTA))
+    else
+        QUOTA_USED_PERCENT=0
+    fi
+    printf "  Quota Used:       %s MB (%s%%)\n" "$DISK_USED" "$QUOTA_USED_PERCENT"
+    
+    QUOTA_REMAINING=$((QUOTA - DISK_USED))
+    if [ "$QUOTA_REMAINING" -lt 0 ]; then
+        QUOTA_REMAINING=0
+    fi
+    printf "  Quota Remaining:  %s MB\n" "$QUOTA_REMAINING"
+    echo "─────────────────────────────────────────────────────────────────"
+    echo ""
+    
+    echo "📁 Storage Usage by Directory:"
+    echo "─────────────────────────────────────────────────────────────────"
+    if [ -d "$MOUNT_POINT/files" ]; then
+        FILES_SIZE=$(du -sm "$MOUNT_POINT/files" 2>/dev/null | awk '{print $1}')
+        printf "  /data/files       %s MB\n" "${FILES_SIZE:-0}"
+    fi
+    if [ -d "$MOUNT_POINT/chunks" ]; then
+        CHUNKS_SIZE=$(du -sm "$MOUNT_POINT/chunks" 2>/dev/null | awk '{print $1}')
+        printf "  /data/chunks      %s MB\n" "${CHUNKS_SIZE:-0}"
+    fi
+    if [ -d "$MOUNT_POINT/metadata" ]; then
+        META_SIZE=$(du -sm "$MOUNT_POINT/metadata" 2>/dev/null | awk '{print $1}')
+        printf "  /data/metadata    %s MB\n" "${META_SIZE:-0}"
+    fi
+    if [ -d "$MOUNT_POINT/temp" ]; then
+        TEMP_SIZE=$(du -sm "$MOUNT_POINT/temp" 2>/dev/null | awk '{print $1}')
+        printf "  /data/temp        %s MB\n" "${TEMP_SIZE:-0}"
+    fi
+    echo "─────────────────────────────────────────────────────────────────"
+    echo ""
+    
+    # Status messages based on conditions
+    if [ "$DISK_AVAIL" -lt 10 ]; then
+        echo "${RED}⚠ CRITICAL: Physical disk almost full! Only ${DISK_AVAIL}MB free${NC}"
+        echo "${RED}  New files will be rejected regardless of quota${NC}"
+    elif [ "$QUOTA_USED_PERCENT" -ge 100 ]; then
+        echo "${RED}⚠ QUOTA EXCEEDED: Using $DISK_USED MB of $QUOTA MB quota${NC}"
+        echo "${RED}  New files will be rejected${NC}"
+    elif [ "$QUOTA_USED_PERCENT" -ge 90 ]; then
+        echo "${YELLOW}⚠ WARNING: Storage usage is at ${QUOTA_USED_PERCENT}% of quota!${NC}"
+    elif [ "$QUOTA_USED_PERCENT" -ge 75 ]; then
+        echo "${YELLOW}⚠ NOTICE: Storage usage is at ${QUOTA_USED_PERCENT}% of quota${NC}"
+    else
+        echo "${GREEN}✓ Storage usage is healthy (${QUOTA_USED_PERCENT}% of quota)${NC}"
+    fi
+    echo ""
+}
+
+check_quota() {
+    QUOTA=$(get_quota_limit)
+    USED=$(get_disk_used_mb)
+    DISK_AVAIL=$(get_disk_available_mb)
+    
+    # Check physical disk first
+    if [ "$DISK_AVAIL" -lt 1 ]; then
+        echo "${RED}✗ DISK FULL: Physical disk has no space (${DISK_AVAIL}MB free)${NC}"
+        return 2
+    fi
+    
+    if [ "$USED" -ge "$QUOTA" ]; then
+        echo "${RED}✗ QUOTA EXCEEDED: Using $USED MB of $QUOTA MB quota${NC}"
+        return 1
+    else
+        REMAINING=$((QUOTA - USED))
+        # Limit to physical available
+        if [ "$REMAINING" -gt "$DISK_AVAIL" ]; then
+            REMAINING=$DISK_AVAIL
+        fi
+        echo "${GREEN}✓ Within quota: $REMAINING MB available${NC}"
+        return 0
+    fi
+}
+
+# For use by other scripts - silent check
+check_can_store() {
+    SIZE_BYTES=$1
+    SIZE_MB=$(( (SIZE_BYTES + 1048575) / 1048576 ))  # Round up
+    
+    RESULT=$(can_store_file "$SIZE_MB")
+    case "$RESULT" in
+        OK)
+            exit 0
+            ;;
+        QUOTA_EXCEEDED)
+            exit 1
+            ;;
+        DISK_FULL)
+            exit 2
+            ;;
+    esac
+}
+
+usage() {
+    echo "StorageOS Storage Manager"
+    echo ""
+    echo "Usage: $0 <command> [options]"
+    echo ""
+    echo "Commands:"
+    echo "  status                    Show storage status and quota information"
+    echo "  set <MB>                  Set quota to specified MB (max: disk capacity)"
+    echo "  check                     Check if within quota limits"
+    echo "  can-store <bytes>         Check if file of given size can be stored"
+    echo "                            Returns: 0=OK, 1=quota exceeded, 2=disk full"
+    echo "  help                      Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0 status                 # Show current storage status"
+    echo "  $0 set 1500               # Set quota to 1500 MB"
+    echo "  $0 check                  # Check quota status"
+    echo "  $0 can-store 104857600    # Check if 100MB file can be stored"
+    echo ""
+}
+
+# Main command dispatcher
+case "$1" in
+    status)
+        show_status
+        ;;
+    set)
+        if [ -z "$2" ]; then
+            echo "${RED}Error: Please specify quota size in MB${NC}"
+            echo "Usage: $0 set <MB>"
+            exit 1
+        fi
+        set_quota "$2"
+        ;;
+    check)
+        check_quota
+        ;;
+    can-store)
+        if [ -z "$2" ]; then
+            echo "${RED}Error: Please specify file size in bytes${NC}"
+            echo "Usage: $0 can-store <bytes>"
+            exit 1
+        fi
+        check_can_store "$2"
+        ;;
+    help|--help|-h)
+        usage
+        ;;
+    *)
+        usage
+        exit 1
+        ;;
+esac
+
+exit $?

@@ -1,0 +1,32 @@
+config BR2_PACKAGE_STORAGEMGR
+	bool "storagemgr"
+	select BR2_PACKAGE_E2FSPROGS
+	select BR2_PACKAGE_E2FSPROGS_RESIZE2FS
+	select BR2_PACKAGE_E2FSPROGS_E2FSCK
+	select BR2_PACKAGE_PARTED
+	select BR2_PACKAGE_UTIL_LINUX
+	select BR2_PACKAGE_UTIL_LINUX_PARTX
+	select BR2_PACKAGE_UTIL_LINUX_LIBBLKID
+	select BR2_PACKAGE_UTIL_LINUX_LIBMOUNT
+	depends on BR2_USE_MMU
+	help
+	  Interactive storage manager for dynamic filesystem resizing.
+	  
+	  This tool allows users to expand or shrink the root filesystem
+	  at runtime or boot time. Features include:
+	  
+	  - Interactive size selection with disk space validation
+	  - Safe expansion without unmounting
+	  - Safe shrinking with data usage checks
+	  - Automatic partition and filesystem resizing
+	  
+	  Run 'storagemgr' to manage storage allocation.
+	  
+	  https://github.com/yourusername/storagemgr
+
+if BR2_PACKAGE_STORAGEMGR
+
+comment "storagemgr needs a toolchain w/ threads, dynamic library"
+	depends on !BR2_TOOLCHAIN_HAS_THREADS || BR2_STATIC_LIBS
+
+endif

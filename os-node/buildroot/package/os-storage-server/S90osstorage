@@ -1,0 +1,64 @@
+#!/bin/sh
+################################################################################
+# S90osstorage - OS Storage Server Init Script
+# NOTE: Server does NOT auto-start. Run 'server-connect' manually.
+################################################################################
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+NAME="os-storage-server"
+DAEMON=/usr/bin/os-storage-server
+PIDFILE=/var/run/osstorage.pid
+CONFIG=/etc/osstorage/config.yaml
+QUOTA_FILE=/etc/storage-quota.conf
+
+start() {
+    # Ensure data directory exists
+    mkdir -p /data/storage /var/run /etc/os
+    
+    # Don't auto-start - user must run 'server-connect' manually
+    echo "OS Storage Server ready."
+    echo "Run 'server-connect' to enroll and start the server."
+    return 0
+}
+
+stop() {
+    printf "Stopping %s..." "$NAME"
+    if start-stop-daemon -K -q -p "$PIDFILE"; then
+        rm -f "$PIDFILE"
+        echo "done."
+        return 0
+    else
+        echo "failed."
+        return 1
+    fi
+}
+
+status() {
+    if [ -f "$PIDFILE" ] && start-stop-daemon -T -q -p "$PIDFILE"; then
+        echo "$NAME is running (pid $(cat "$PIDFILE"))."
+        return 0
+    fi
+    echo "$NAME is not running."
+    return 1
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart|reload)
+        stop && sleep 1 && start
+        ;;
+    status)
+        status
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}" >&2
+        exit 1
+        ;;
+esac
+
+exit $?
