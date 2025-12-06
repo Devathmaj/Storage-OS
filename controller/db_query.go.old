@@ -1,0 +1,150 @@
+package main
+
+import (
+	"database/sql"
+	"fmt"
+	"log"
+	"os"
+
+	_ "github.com/mattn/go-sqlite3"
+)
+
+func main() {
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: go run db_query.go <db_path>")
+		os.Exit(1)
+	}
+
+	dbPath := os.Args[1]
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		log.Fatal("Failed to open database:", err)
+	}
+	defer db.Close()
+
+	// Enable foreign keys
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		log.Fatal("Failed to enable foreign keys:", err)
+	}
+
+	// Get all table names
+	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+	if err != nil {
+		log.Fatal("Failed to query tables:", err)
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			log.Fatal("Failed to scan table name:", err)
+		}
+		tables = append(tables, name)
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Fatal("Error iterating tables:", err)
+	}
+
+	fmt.Println("=== DATABASE TABLES ===")
+	for _, table := range tables {
+		fmt.Printf("\n--- TABLE: %s ---\n", table)
+
+		// Get table schema
+		schemaRows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+		if err != nil {
+			log.Printf("Failed to get schema for %s: %v", table, err)
+			continue
+		}
+
+		fmt.Println("Schema:")
+		for schemaRows.Next() {
+			var cid, name, typ, notnull, dflt_value, pk string
+			if err := schemaRows.Scan(&cid, &name, &typ, &notnull, &dflt_value, &pk); err != nil {
+				log.Printf("Failed to scan schema: %v", err)
+				continue
+			}
+			fmt.Printf("  %s %s", name, typ)
+			if pk == "1" {
+				fmt.Printf(" PRIMARY KEY")
+			}
+			if notnull == "1" {
+				fmt.Printf(" NOT NULL")
+			}
+			if dflt_value != "" {
+				fmt.Printf(" DEFAULT %s", dflt_value)
+			}
+			fmt.Println()
+		}
+		schemaRows.Close()
+
+		// Get row count
+		var count int
+		if err := db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", table)).Scan(&count); err != nil {
+			log.Printf("Failed to count rows in %s: %v", table, err)
+			continue
+		}
+
+		fmt.Printf("Row count: %d\n", count)
+
+		if count > 0 {
+			// Get all data
+			dataRows, err := db.Query(fmt.Sprintf("SELECT * FROM %s LIMIT 50", table))
+			if err != nil {
+				log.Printf("Failed to query data from %s: %v", table, err)
+				continue
+			}
+
+			columns, err := dataRows.Columns()
+			if err != nil {
+				log.Printf("Failed to get columns: %v", err)
+				dataRows.Close()
+				continue
+			}
+
+			fmt.Println("Data:")
+			values := make([]interface{}, len(columns))
+			valuePtrs := make([]interface{}, len(columns))
+			for i := range values {
+				valuePtrs[i] = &values[i]
+			}
+
+			rowNum := 0
+			for dataRows.Next() {
+				if err := dataRows.Scan(valuePtrs...); err != nil {
+					log.Printf("Failed to scan row: %v", err)
+					continue
+				}
+
+				fmt.Printf("  Row %d: ", rowNum+1)
+				for i, col := range columns {
+					val := values[i]
+					if val == nil {
+						fmt.Printf("%s=NULL ", col)
+					} else {
+						switch v := val.(type) {
+						case []byte:
+							if len(v) > 50 {
+								fmt.Printf("%s=[%d bytes] ", col, len(v))
+							} else {
+								fmt.Printf("%s=%q ", col, string(v))
+							}
+						default:
+							fmt.Printf("%s=%v ", col, v)
+						}
+					}
+				}
+				fmt.Println()
+				rowNum++
+			}
+			dataRows.Close()
+
+			if count > 50 {
+				fmt.Printf("  ... and %d more rows\n", count-50)
+			}
+		}
+		fmt.Println()
+	}
+}

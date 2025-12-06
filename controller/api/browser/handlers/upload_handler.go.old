@@ -1,0 +1,107 @@
+package handlers
+
+import (
+	"encoding/json"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+
+	services "storageos/controller/services/browser"
+)
+
+const (
+	maxUploadSize = 0 // No limit
+	tempUploadDir = "/tmp/uploads"
+)
+
+// UploadFileHandler handles file uploads from the browser client.
+// It receives multipart form data, saves the file temporarily, and
+// passes it to the services layer for processing (compression + encryption).
+func UploadFileHandler(w http.ResponseWriter, r *http.Request) {
+	// Only accept POST
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse multipart form with 1GB memory buffer (rest goes to disk)
+	// The parameter here is the in-memory threshold, not a total size limit
+	if err := r.ParseMultipartForm(1 << 30); err != nil {
+		log.Printf("Error parsing multipart form: %v", err)
+		http.Error(w, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	// Get the file from form data
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		log.Printf("Error retrieving file: %v", err)
+		http.Error(w, "No file provided", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	// Get authenticated user ID from context
+	claims, ok := r.Context().Value("user").(*services.Claims)
+	if !ok || claims == nil {
+		log.Printf("Failed to get user from context")
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	
+	ownerID := claims.UserID
+
+	compressUploads := true
+	if compressParam := r.FormValue("compress"); compressParam != "" {
+		compressUploads = strings.ToLower(compressParam) != "false"
+	}
+
+	// Ensure temp directory exists
+	if err := os.MkdirAll(tempUploadDir, 0755); err != nil {
+		log.Printf("Error creating temp directory: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Create temp file
+	tempFilePath := filepath.Join(tempUploadDir, header.Filename)
+	dst, err := os.Create(tempFilePath)
+	if err != nil {
+		log.Printf("Error creating temp file: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	defer dst.Close()
+
+	// Copy uploaded file to temp location
+	if _, err := io.Copy(dst, file); err != nil {
+		log.Printf("Error saving file: %v", err)
+		http.Error(w, "Error saving file", http.StatusInternalServerError)
+		return
+	}
+
+	// Close the file before passing to service layer
+	dst.Close()
+
+	// Pass to service layer for processing
+	if err := services.AcceptFile(r.Context(), tempFilePath, ownerID, compressUploads); err != nil {
+		log.Printf("Error processing file: %v", err)
+		http.Error(w, "Error processing file", http.StatusInternalServerError)
+		return
+	}
+
+	// Return success response
+	response := map[string]interface{}{
+		"success":  true,
+		"filename": header.Filename,
+		"size":     header.Size,
+		"message":  "File uploaded and processed successfully",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
